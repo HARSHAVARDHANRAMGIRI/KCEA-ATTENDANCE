@@ -587,6 +587,11 @@ def logout():
     session.clear()
     return redirect(url_for('index'))
 
-if __name__ == '__main__':
+# Ensure DB is initialized even when running under Gunicorn
+try:
     init_db()
+except Exception as e:
+    print(f"DB init error: {e}")
+
+if __name__ == '__main__':
     app.run(debug=True)
