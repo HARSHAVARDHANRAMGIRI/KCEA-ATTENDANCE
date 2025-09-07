@@ -330,7 +330,7 @@ def mark_attendance():
         return jsonify({'success': False, 'message': 'Invalid period'})
     
     # Check if it's lunch time
-    if period_info[4]:  # is_lunch
+    if bool(period_info[5]):  # is_lunch column index 5
         conn.close()
         return jsonify({'success': False, 'message': 'Cannot mark attendance during lunch break'})
     
@@ -476,149 +476,99 @@ def admin_users():
     
     return render_template('admin_users.html', users=users)
 
-@app.route('/admin/delete-user/<int:user_id>', methods=['POST'])
-def delete_user(user_id):
+@app.route('/admin/attendance')
+def admin_attendance_by_class():
     if 'user_id' not in session:
         return redirect(url_for('login'))
     
     conn = sqlite3.connect('attendance.db')
     cursor = conn.cursor()
-    
-    # Check if user is admin
+
+    # Check admin
     cursor.execute('SELECT role FROM users WHERE id = ?', (session['user_id'],))
-    user_role = cursor.fetchone()
-    
-    if not user_role or user_role[0] != 'admin':
+    role_row = cursor.fetchone()
+    if not role_row or role_row[0] != 'admin':
+        flash('Access denied. Admin privileges required.', 'error')
+        return redirect(url_for('dashboard'))
+
+    # Class filter
+    selected_class = request.args.get('class')
+
+    # Distinct classes
+    cursor.execute("SELECT DISTINCT class_name FROM users WHERE role='student' AND class_name IS NOT NULL ORDER BY class_name")
+    classes = [row[0] for row in cursor.fetchall()]
+
+    # Build query
+    params = []
+    base_query = '''
+        SELECT u.id, u.name, u.college_id, u.class_name, u.semester,
+               COALESCE(SUM(CASE WHEN a.status = 'present' THEN 1 ELSE 0 END), 0) AS present_count,
+               COUNT(a.id) AS total_count
+        FROM users u
+        LEFT JOIN attendance a ON a.student_id = u.id
+        WHERE u.role = 'student'
+    '''
+    if selected_class:
+        base_query += ' AND u.class_name = ?'
+        params.append(selected_class)
+    base_query += ' GROUP BY u.id ORDER BY u.class_name, u.name'
+
+    cursor.execute(base_query, params)
+    rows = cursor.fetchall()
+
+    # Compute percentage in Python for clarity
+    summaries = []
+    for r in rows:
+        present = r[5]
+        total = r[6]
+        percent = round((present / total * 100), 1) if total else 0.0
+        summaries.append({
+            'id': r[0], 'name': r[1], 'college_id': r[2], 'class_name': r[3], 'semester': r[4],
+            'present': present, 'total': total, 'percent': percent
+        })
+
+    conn.close()
+    return render_template('admin_attendance.html', classes=classes, selected_class=selected_class, summaries=summaries)
+
+@app.route('/admin/reset-password', methods=['POST'])
+def admin_reset_password():
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'message': 'Not logged in'})
+
+    conn = sqlite3.connect('attendance.db')
+    cursor = conn.cursor()
+
+    # Check admin
+    cursor.execute('SELECT role FROM users WHERE id = ?', (session['user_id'],))
+    role_row = cursor.fetchone()
+    if not role_row or role_row[0] != 'admin':
+        conn.close()
         return jsonify({'success': False, 'message': 'Access denied'})
-    
-    # Don't allow deleting admin user
-    cursor.execute('SELECT role FROM users WHERE id = ?', (user_id,))
-    target_user = cursor.fetchone()
-    
-    if target_user and target_user[0] == 'admin':
-        return jsonify({'success': False, 'message': 'Cannot delete admin user'})
-    
-    # Delete user and their attendance
-    cursor.execute('DELETE FROM attendance WHERE student_id = ?', (user_id,))
-    cursor.execute('DELETE FROM users WHERE id = ?', (user_id,))
-    
+
+    data = request.get_json() or {}
+    college_id = data.get('college_id')
+    if not college_id:
+        conn.close()
+        return jsonify({'success': False, 'message': 'college_id is required'})
+
+    # Find user
+    cursor.execute('SELECT id, email FROM users WHERE college_id = ?', (college_id,))
+    user = cursor.fetchone()
+    if not user:
+        conn.close()
+        return jsonify({'success': False, 'message': 'User not found'})
+
+    # Generate new password
+    new_password = secrets.token_hex(4)  # 8 hex chars
+    new_hash = generate_password_hash(new_password)
+    cursor.execute('UPDATE users SET password_hash = ? WHERE id = ?', (new_hash, user[0]))
     conn.commit()
     conn.close()
-    
-    return jsonify({'success': True, 'message': 'User deleted successfully'})
 
-@app.route('/download')
-def download_app():
-    return render_template('download.html')
+    # In production, email the password. Here we return it to the admin for immediate use.
+    return jsonify({'success': True, 'message': 'Password reset', 'new_password': new_password})
 
-@app.route('/download/app')
-def download_app_file():
-    # Create a simple HTML file that can be saved as an app
-    app_content = """
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>KCEA Attendance Portal - Offline App</title>
-    <style>
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #1565c0 0%, #7b1fa2 100%);
-            margin: 0;
-            padding: 20px;
-            min-height: 100vh;
-            color: white;
-        }
-        .container {
-            max-width: 400px;
-            margin: 0 auto;
-            text-align: center;
-            padding: 40px 20px;
-        }
-        .logo {
-            width: 80px;
-            height: 80px;
-            background: linear-gradient(135deg, #1565c0, #7b1fa2);
-            color: white;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: bold;
-            font-size: 24px;
-            margin: 0 auto 20px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
-        }
-        h1 { margin-bottom: 10px; }
-        .subtitle { margin-bottom: 30px; opacity: 0.9; }
-        .btn {
-            display: inline-block;
-            padding: 15px 30px;
-            margin: 10px;
-            background: #ffc107;
-            color: #000;
-            text-decoration: none;
-            border-radius: 10px;
-            font-weight: bold;
-            transition: all 0.3s ease;
-        }
-        .btn:hover {
-            background: #ff8f00;
-            transform: translateY(-2px);
-        }
-        .info {
-            background: rgba(255,255,255,0.1);
-            padding: 20px;
-            border-radius: 10px;
-            margin: 20px 0;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="logo">KCEA</div>
-        <h1>KCEA Attendance Portal</h1>
-        <p class="subtitle">Kshatriya College of Engineering</p>
-        
-        <div class="info">
-            <h3>📱 Offline App</h3>
-            <p>This is your personal KCEA Attendance Portal app. Save this file to your device and access it anytime!</p>
-        </div>
-        
-        <a href="https://kcea-attendance-portal.railway.app" class="btn" target="_blank">
-            🌐 Open Online Portal
-        </a>
-        
-        <div class="info">
-            <h4>📋 Features:</h4>
-            <ul style="text-align: left;">
-                <li>✅ Student Registration</li>
-                <li>✅ Period-based Attendance</li>
-                <li>✅ Real-time Tracking</li>
-                <li>✅ Monthly Reports</li>
-                <li>✅ Admin Panel</li>
-            </ul>
-        </div>
-        
-        <div class="info">
-            <h4>📞 Contact:</h4>
-            <p>Email: r.harsha0541@gmail.com</p>
-            <p>Developer: Harshavardhan Ramgiri</p>
-        </div>
-    </div>
-</body>
-</html>
-    """
-    
-    from flask import Response
-    return Response(
-        app_content,
-        mimetype='text/html',
-        headers={
-            'Content-Disposition': 'attachment; filename=KCEA_Attendance_Portal.html'
-        }
-    )
+
 
 @app.route('/logout')
 def logout():

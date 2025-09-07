@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+
+{% block title %}Attendance by Class - Admin{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+  <div class="row">
+    <div class="col-12 d-flex justify-content-between align-items-center mb-4">
+      <h2 class="fw-bold text-primary"><i class="fas fa-clipboard-check me-2"></i>Attendance by Class</h2>
+      <a href="{{ url_for('admin_dashboard') }}" class="btn btn-outline-primary"><i class="fas fa-arrow-left me-1"></i>Back to Admin</a>
+    </div>
+  </div>
+
+  <div class="row mb-3">
+    <div class="col-md-6">
+      <form method="GET" class="d-flex gap-2">
+        <select name="class" class="form-select" onchange="this.form.submit()">
+          <option value="">All Classes</option>
+          {% for c in classes %}
+            <option value="{{ c }}" {% if selected_class == c %}selected{% endif %}>{{ c }}</option>
+          {% endfor %}
+        </select>
+        <noscript><button class="btn btn-primary" type="submit">Filter</button></noscript>
+      </form>
+    </div>
+    <div class="col-md-6 text-md-end">
+      <button class="btn btn-success" onclick="exportCSV()"><i class="fas fa-file-csv me-1"></i>Export CSV</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-body">
+      {% if summaries %}
+      <div class="table-responsive">
+        <table class="table table-hover">
+          <thead>
+            <tr>
+              <th>Student</th>
+              <th>Roll No</th>
+              <th>Class</th>
+              <th>Semester</th>
+              <th>Present</th>
+              <th>Total</th>
+              <th>%</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for s in summaries %}
+            <tr>
+              <td>{{ s.name }}</td>
+              <td>{{ s.college_id }}</td>
+              <td>{{ s.class_name or '-' }}</td>
+              <td>{{ s.semester or '-' }}</td>
+              <td class="text-success fw-bold">{{ s.present }}</td>
+              <td>{{ s.total }}</td>
+              <td><span class="badge {% if s.percent >= 75 %}bg-success{% elif s.percent >= 50 %}bg-warning{% else %}bg-danger{% endif %}">{{ s.percent }}%</span></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="text-center text-muted py-4">
+        <i class="fas fa-calendar-times fa-3x mb-3"></i>
+        <p>No attendance data found</p>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card mt-4">
+    <div class="card-header"><h5 class="mb-0 fw-bold"><i class="fas fa-key me-2"></i>Reset Password (by Roll No)</h5></div>
+    <div class="card-body">
+      <div class="row g-2 align-items-center">
+        <div class="col-md-4">
+          <input id="rp-roll" type="text" class="form-control" placeholder="Enter College Roll No (e.g., 21CSE001)">
+        </div>
+        <div class="col-md-3">
+          <button class="btn btn-danger" onclick="resetPassword()"><i class="fas fa-sync-alt me-1"></i>Reset Password</button>
+        </div>
+        <div class="col-md-5">
+          <div id="rp-result" class="small text-muted"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function resetPassword() {
+  const roll = document.getElementById('rp-roll').value.trim();
+  const resEl = document.getElementById('rp-result');
+  if (!roll) {
+    resEl.textContent = 'Please enter a roll number.';
+    resEl.className = 'small text-danger';
+    return;
+  }
+  try {
+    const r = await fetch('/admin/reset-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ college_id: roll })
+    });
+    const data = await r.json();
+    if (data.success) {
+      resEl.innerHTML = 'New password: <code>' + data.new_password + '</code> (share securely with the student)';
+      resEl.className = 'small text-success';
+    } else {
+      resEl.textContent = 'Error: ' + data.message;
+      resEl.className = 'small text-danger';
+    }
+  } catch (e) {
+    resEl.textContent = 'Network error. Try again.';
+    resEl.className = 'small text-danger';
+  }
+}
+
+function exportCSV() {
+  // Simple client-side export of the current table to CSV
+  const rows = Array.from(document.querySelectorAll('table tr'));
+  if (!rows.length) return;
+  const csv = rows.map(tr => Array.from(tr.querySelectorAll('th,td')).map(td => '"' + (td.innerText||'').replaceAll('"','""') + '"').join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'attendance_by_class.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+</script>
+{% endblock %}
