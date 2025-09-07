@@ -46,6 +46,18 @@ def init_db():
             FOREIGN KEY (student_id) REFERENCES users (id)
         )
     ''')
+
+    # Migration: ensure required columns exist for older databases
+    cursor.execute("PRAGMA table_info(attendance)")
+    columns = [row[1] for row in cursor.fetchall()]
+    if 'period' not in columns:
+        cursor.execute("ALTER TABLE attendance ADD COLUMN period INTEGER")
+    if 'subject' not in columns:
+        cursor.execute("ALTER TABLE attendance ADD COLUMN subject TEXT")
+    if 'timestamp' not in columns:
+        cursor.execute("ALTER TABLE attendance ADD COLUMN timestamp TEXT")
+    if 'status' not in columns:
+        cursor.execute("ALTER TABLE attendance ADD COLUMN status TEXT DEFAULT 'present'")
     
     # Class periods table
     cursor.execute('''
